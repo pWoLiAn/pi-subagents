@@ -1632,7 +1632,22 @@ Terse command-style prompts produce shallow, generic work.
     if (idx < 0) return;
     const record = agents[idx];
 
-    await viewAgentConversation(ctx, record);
+    // Show action menu for the selected agent
+    const isActive = record.status === "running" || record.status === "queued";
+    const actions = ["View conversation"];
+    if (isActive) actions.push("Kill agent");
+
+    const action = await ctx.ui.select(`${getDisplayName(record.type)} (${record.status})`, actions);
+    if (!action) { await showRunningAgents(ctx); return; }
+
+    if (action === "Kill agent") {
+      manager.abort(record.id);
+      pi.events.emit("subagents:killed", { id: record.id });
+      ctx.ui.notify(`Agent ${record.id} killed.`, "info");
+    } else if (action === "View conversation") {
+      await viewAgentConversation(ctx, record);
+    }
+
     // Back-navigation: re-show the list
     await showRunningAgents(ctx);
   }
