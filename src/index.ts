@@ -1443,6 +1443,39 @@ Terse command-style prompts produce shallow, generic work.
     },
   }));
 
+  pi.registerTool(defineTool({
+    name: "kill_subagent",
+    label: "Kill Agent",
+    description:
+      "Kill a running or queued background agent immediately. Use when the user asks to stop, kill, or cancel an agent, " +
+      "or when an agent is stuck/taking too long.",
+    promptSnippet: "Kill a running or queued background agent",
+    promptGuidelines: [
+      "When the user says to kill, stop, or cancel an agent, use this tool immediately.",
+    ],
+    parameters: Type.Object({
+      agent_id: Type.String({
+        description: "The agent ID to kill (must be running or queued).",
+      }),
+    }),
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const record = manager.getRecord(params.agent_id);
+      if (!record) {
+        return textResult(`Agent not found: "${params.agent_id}". It may have already completed or been cleaned up.`);
+      }
+      if (record.status !== "running" && record.status !== "queued") {
+        return textResult(`Agent "${params.agent_id}" is not running or queued (status: ${record.status}). Nothing to kill.`);
+      }
+      const wasStatus = record.status;
+      const success = manager.abort(params.agent_id);
+      if (success) {
+        pi.events.emit("subagents:killed", { id: params.agent_id });
+        return textResult(`Agent ${params.agent_id} killed (was ${wasStatus}).`);
+      }
+      return textResult(`Failed to kill agent ${params.agent_id}.`);
+    },
+  }));
+
   // ---- /agents interactive menu ----
 
   const projectAgentsDir = () => join(process.cwd(), ".pi", "agents");
