@@ -1929,9 +1929,9 @@ Write the file using the write tool. Only write the file, nothing else.`;
     if (!modelChoice) return;
 
     let modelLine = "";
-    if (modelChoice === "haiku") modelLine = "\nmodel: anthropic/claude-haiku-4-5-20251001";
-    else if (modelChoice === "sonnet") modelLine = "\nmodel: anthropic/claude-sonnet-4-6";
-    else if (modelChoice === "opus") modelLine = "\nmodel: anthropic/claude-opus-4-6";
+    if (modelChoice === "haiku") modelLine = "\nmodel: claude-haiku-4.5";
+    else if (modelChoice === "sonnet") modelLine = "\nmodel: claude-sonnet-4.6";
+    else if (modelChoice === "opus") modelLine = "\nmodel: claude-opus-4.6";
     else if (modelChoice === "custom...") {
       const customModel = await ctx.ui.input("Model (provider/modelId)");
       if (customModel) modelLine = `\nmodel: ${customModel}`;
