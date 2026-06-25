@@ -16,11 +16,10 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { BUILTIN_TOOL_NAMES, getAgentConfig, getConfig, getMemoryToolNames, getReadOnlyMemoryToolNames, getToolNamesForType } from "./agent-types.js";
+import { BUILTIN_TOOL_NAMES, getAgentConfig, getConfig, getToolNamesForType } from "./agent-types.js";
 import { buildParentContext, extractText } from "./context.js";
 import { DEFAULT_AGENTS } from "./default-agents.js";
 import { detectEnv } from "./env.js";
-import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.js";
 import { buildAgentPrompt, type PromptExtras } from "./prompts.js";
 import { preloadSkills } from "./skill-loader.js";
 import type { SubagentType, ThinkingLevel } from "./types.js";
@@ -334,27 +333,6 @@ export async function runAgent(
   }
 
   let toolNames = getToolNamesForType(type);
-
-  // Persistent memory: detect write capability and branch accordingly.
-  // Account for disallowedTools — a tool in the base set but on the denylist is not truly available.
-  if (agentConfig?.memory) {
-    const existingNames = new Set(toolNames);
-    const denied = agentConfig.disallowedTools ? new Set(agentConfig.disallowedTools) : undefined;
-    const effectivelyHas = (name: string) => existingNames.has(name) && !denied?.has(name);
-    const hasWriteTools = effectivelyHas("write") || effectivelyHas("edit");
-
-    if (hasWriteTools) {
-      // Read-write memory: add any missing memory tool names (read/write/edit)
-      const extraNames = getMemoryToolNames(existingNames);
-      if (extraNames.length > 0) toolNames = [...toolNames, ...extraNames];
-      extras.memoryBlock = buildMemoryBlock(agentConfig.name, agentConfig.memory, configCwd);
-    } else {
-      // Read-only memory: only add read tool name, use read-only prompt
-      const extraNames = getReadOnlyMemoryToolNames(existingNames);
-      if (extraNames.length > 0) toolNames = [...toolNames, ...extraNames];
-      extras.memoryBlock = buildReadOnlyMemoryBlock(agentConfig.name, agentConfig.memory, configCwd);
-    }
-  }
 
   // Build system prompt from agent config
   let systemPrompt: string;

@@ -18,12 +18,25 @@
  * Symlinks are rejected for security (deviation from Pi, which follows them).
  */
 
-import type { Dirent } from "node:fs";
-import { existsSync, readdirSync } from "node:fs";
+import { type Dirent, lstatSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { isSymlink, isUnsafeName, safeReadFile } from "./memory.js";
+
+function isUnsafeName(name: string): boolean {
+  if (!name || name.length > 128) return true;
+  return !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name);
+}
+
+function isSymlink(filePath: string): boolean {
+  try { return lstatSync(filePath).isSymbolicLink(); } catch { return false; }
+}
+
+function safeReadFile(filePath: string): string | undefined {
+  if (!existsSync(filePath)) return undefined;
+  if (isSymlink(filePath)) return undefined;
+  try { return readFileSync(filePath, "utf-8"); } catch { return undefined; }
+}
 
 export interface PreloadedSkill {
   name: string;

@@ -12,9 +12,14 @@ import { isAbsolute } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resumeAgent, runAgent, type ToolActivity } from "./agent-runner.js";
-import type { AgentInvocation, AgentRecord, IsolationMode, SubagentType, ThinkingLevel } from "./types.js";
-import { addUsage } from "./usage.js";
-import { cleanupWorktree, createWorktree, pruneWorktrees, } from "./worktree.js";
+import type { AgentInvocation, AgentRecord, IsolationMode, LifetimeUsage, SubagentType, ThinkingLevel } from "./types.js";
+
+/** Add a usage delta into a target accumulator (mutates target). */
+function addUsage(into: LifetimeUsage, delta: { input: number; output: number; cacheWrite: number }): void {
+  into.input += delta.input;
+  into.output += delta.output;
+  into.cacheWrite += delta.cacheWrite;
+}
 
 export type OnAgentComplete = (record: AgentRecord) => void;
 export type OnAgentStart = (record: AgentRecord) => void;
@@ -104,9 +109,6 @@ export class AgentManager {
   private onStart?: OnAgentStart;
   private onCompact?: OnAgentCompact;
   private maxConcurrent: number;
-  /** Base repos worktrees were created from — so dispose() can prune them all,
-   *  not just the parent repo (caller-supplied cwd can target other repos). */
-  private worktreeRepos = new Set<string>();
 
   /** Queue of background agents waiting to start. */
   private queue: { id: string; args: SpawnArgs }[] = [];
@@ -198,31 +200,8 @@ export class AgentManager {
     assertValidSpawnCwd(options.cwd);
     // Single resolution point for the caller-supplied cwd — the worktree base
     // repo and both cleanup calls below MUST agree on this value forever.
-    const customCwd = options.cwd ?? undefined; // null (RPC "unset") → undefined
+    const customCwd = options.cwd ?? undefined;
     const baseCwd = customCwd ?? ctx.cwd;
-
-    // Worktree isolation: try to create a temporary git worktree. Strict —
-    // fail loud if not possible (no silent fallback to main tree). Done
-    // BEFORE state mutation so a throw doesn't leave the record half-running.
-    let worktreeCwd: string | undefined;
-    if (options.isolation === "worktree") {
-      const wt = createWorktree(baseCwd, id);
-      if (!wt) {
-        throw new Error(
-          'Cannot run with isolation: "worktree" — not a git repo, no commits yet, or `git worktree add` failed. ' +
-          'Initialize git and commit at least once, or omit `isolation`.',
-        );
-      }
-      record.worktree = wt;
-      // workPath preserves subdirectory scoping for caller-supplied cwds: a
-      // cwd deep in a monorepo maps to the same subdir inside the copy, not
-      // the copied repo's root. Plain worktree spawns keep the historical
-      // behavior (agent at the copy's root) — moving them to workPath would
-      // also move .pi config discovery when the parent session sits in a repo
-      // subdirectory, silently dropping extensions/skills.
-      worktreeCwd = customCwd !== undefined ? wt.workPath : wt.path;
-      this.worktreeRepos.add(baseCwd);
-    }
 
     record.status = "running";
     record.startedAt = Date.now();
@@ -246,12 +225,7 @@ export class AgentManager {
       isolated: options.isolated,
       inheritContext: options.inheritContext,
       thinkingLevel: options.thinkingLevel,
-      // Worktree wins for the working dir (the agent must run in the copy —
-      // which, with a custom cwd, was created from that target). Config stays
-      // with the parent project when a caller-supplied cwd is in play; it must
-      // stay undefined otherwise so plain worktree runs keep resolving config
-      // (incl. relative extension paths and memory) inside the worktree copy.
-      cwd: worktreeCwd ?? customCwd,
+      cwd: customCwd,
       configCwd: customCwd !== undefined ? ctx.cwd : undefined,
       signal: record.abortController!.signal,
       onToolActivity: (activity) => {
@@ -292,25 +266,6 @@ export class AgentManager {
 
         detach();
 
-        // Final flush of streaming output file
-        if (record.outputCleanup) {
-          try { record.outputCleanup(); } catch { /* ignore */ }
-          record.outputCleanup = undefined;
-        }
-
-        // Clean up worktree if used
-        if (record.worktree) {
-          const wtResult = cleanupWorktree(baseCwd, record.worktree, options.description);
-          record.worktreeResult = wtResult;
-          if (wtResult.hasChanges && wtResult.branch) {
-            // With a caller-supplied cwd the branch lives in THAT repo, not the
-            // parent session's — say so, or the orchestrator merges in the wrong repo.
-            const repoNote = customCwd !== undefined ? ` in \`${baseCwd}\`` : "";
-            record.result = (record.result ?? "") +
-              `\n\n---\nChanges saved to branch \`${wtResult.branch}\`${repoNote}. Merge with: \`git merge ${wtResult.branch}\`${customCwd !== undefined ? ` (run in \`${baseCwd}\`)` : ""}`;
-          }
-        }
-
         // Fire onComplete for foreground agents too — lifecycle symmetry.
         // Mark resultConsumed so the callback skips notifications (result returned inline).
         if (!options.isBackground) {
@@ -332,20 +287,6 @@ export class AgentManager {
         record.completedAt ??= Date.now();
 
         detach();
-
-        // Final flush of streaming output file on error
-        if (record.outputCleanup) {
-          try { record.outputCleanup(); } catch { /* ignore */ }
-          record.outputCleanup = undefined;
-        }
-
-        // Best-effort worktree cleanup on error
-        if (record.worktree) {
-          try {
-            const wtResult = cleanupWorktree(baseCwd, record.worktree, options.description);
-            record.worktreeResult = wtResult;
-          } catch { /* ignore cleanup errors */ }
-        }
 
         // Fire onComplete for foreground agents too — lifecycle symmetry.
         // Mark resultConsumed so the callback skips notifications (result returned inline).
@@ -574,18 +515,10 @@ export class AgentManager {
 
   dispose() {
     clearInterval(this.cleanupInterval);
-    // Clear queue
     this.queue = [];
     for (const record of this.agents.values()) {
       record.session?.dispose();
     }
     this.agents.clear();
-    // Prune any orphaned git worktrees (crash recovery)
-    try { pruneWorktrees(process.cwd()); } catch { /* ignore */ }
-    // Also prune repos that caller-supplied cwds created worktrees in — a clean
-    // exit with in-flight agents would otherwise leave stale registrations there.
-    for (const repo of this.worktreeRepos) {
-      try { pruneWorktrees(repo); } catch { /* ignore */ }
-    }
   }
 }

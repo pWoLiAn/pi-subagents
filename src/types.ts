@@ -4,7 +4,8 @@
 
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { LifetimeUsage } from "./usage.js";
+/** Lifetime token usage, accumulated via message_end events. */
+export type LifetimeUsage = { input: number; output: number; cacheWrite: number };
 
 export type { ThinkingLevel };
 
