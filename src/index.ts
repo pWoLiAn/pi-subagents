@@ -338,6 +338,16 @@ export default function (pi: ExtensionAPI) {
   // Broadcast readiness so extensions loaded after us can discover us
   pi.events.emit("subagents:ready", {});
 
+  // Status bar indicator
+  let runningCount = 0;
+  function updateStatusBar(ctx: ExtensionContext | undefined) {
+    if (!ctx?.hasUI) return;
+    ctx.ui.setStatus("subagents", runningCount > 0 ? ctx.ui.theme.fg("accent", `🤖 ${runningCount}`) : undefined);
+  }
+  pi.events.on("subagents:started", () => { runningCount++; updateStatusBar(currentCtx); });
+  pi.events.on("subagents:completed", () => { runningCount = Math.max(0, runningCount - 1); updateStatusBar(currentCtx); });
+  pi.events.on("subagents:failed", () => { runningCount = Math.max(0, runningCount - 1); updateStatusBar(currentCtx); });
+
   pi.on("session_shutdown", async () => {
     currentCtx = undefined;
     delete (globalThis as any)[MANAGER_KEY];
