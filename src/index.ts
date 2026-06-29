@@ -179,7 +179,7 @@ function buildNotificationDetails(record: AgentRecord, resultMaxLen: number): No
     maxTurns: undefined,
     totalTokens,
     durationMs: record.completedAt ? record.completedAt - record.startedAt : 0,
-    error: record.error,
+    modelName: record.invocation?.modelName,
     resultPreview: record.result
       ? record.result.length > resultMaxLen
         ? record.result.slice(0, resultMaxLen) + "…"
@@ -206,6 +206,7 @@ export default function (pi: ExtensionAPI) {
         let line = `${icon} ${theme.bold(d.description)} ${theme.fg("dim", statusText)}`;
 
         const parts: string[] = [];
+        if (d.modelName) parts.push(d.modelName);
         if (d.turnCount > 0) parts.push(formatTurns(d.turnCount, d.maxTurns));
         if (d.toolUses > 0) parts.push(`${d.toolUses} tool use${d.toolUses === 1 ? "" : "s"}`);
         if (d.totalTokens > 0) parts.push(formatTokens(d.totalTokens));

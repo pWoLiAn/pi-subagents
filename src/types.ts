@@ -130,6 +130,7 @@ export interface NotificationDetails {
   maxTurns?: number;
   totalTokens: number;
   durationMs: number;
+  modelName?: string;
   outputFile?: string;
   error?: string;
   resultPreview: string;
